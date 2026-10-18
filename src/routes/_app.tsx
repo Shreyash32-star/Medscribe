@@ -52,7 +52,7 @@ function AppLayout() {
         </nav>
         <div className="rounded-xl border bg-card p-3">
           <p className="truncate text-sm font-semibold text-navy">{profile?.full_name || "Doctor"}</p>
-          <p className="truncate text-xs text-muted-foreground">{profile?.specialty || user.user_metadata["username"] || "Doctor"}</p>
+          <p className="truncate text-xs text-muted-foreground">{profile?.specialty || user.email}</p>
           <Button variant="ghost" size="sm" className="mt-2 w-full justify-start px-2" onClick={() => supabase.auth.signOut()}>
             <LogOut /> Sign out
           </Button>
