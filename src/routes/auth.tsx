@@ -1,97 +1,98 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { Loader2, MailCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
-import { normalizeUsername, signInIdentity, usernameIdentity } from "@/lib/username";
 
 export const Route = createFileRoute("/auth")({
   validateSearch: (s: Record<string, unknown>): { mode?: "signup" } => (s["mode"] === "signup" ? { mode: "signup" } : {}),
-  head: () => ({ meta: [{ title: "Sign in — MedScribe AI" }, { name: "description", content: "Sign in to your doctor workspace with your username and password." }] }),
+  head: () => ({
+    meta: [
+      { title: "Sign in — MedScribe AI" },
+      { name: "description", content: "Sign in or create your MedScribe AI doctor account." },
+      { property: "og:title", content: "Sign in — MedScribe AI" },
+      { property: "og:description", content: "Access your clinical documentation workspace." },
+    ],
+  }),
   component: AuthPage,
 });
 
 function AuthPage() {
   const { mode } = Route.useSearch();
   const [isSignup, setIsSignup] = useState(mode === "signup");
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  useEffect(() => { if (user) navigate({ to: "/dashboard" }); }, [user, navigate]);
-  useEffect(() => { setIsSignup(mode === "signup"); }, [mode]);
+  useEffect(() => {
+    if (user) navigate({ to: "/dashboard" });
+  }, [user, navigate]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (busy) return;
     setBusy(true);
     try {
       if (isSignup) {
-        const normalized = normalizeUsername(username);
-        // Refuse before creating an unusable account or sending mail to an internal ID.
-        const response = await fetch(`${import.meta.env['VITE_SUPABASE_URL']}/auth/v1/settings`, {
-          headers: { apikey: import.meta.env['VITE_SUPABASE_PUBLISHABLE_KEY'] },
-        });
-        if (!response.ok) throw new Error("Unable to check registration settings. Please try again.");
-        const settings = await response.json();
-        if (settings.mailer_autoconfirm !== true) {
-          throw new Error("Username registration is not enabled yet. Please contact the administrator.");
-        }
         const { data, error } = await supabase.auth.signUp({
-          email: usernameIdentity(normalized), password,
-          options: { data: { username: normalized } },
+          email,
+          password,
+          options: { emailRedirectTo: window.location.origin + "/dashboard", data: { full_name: name } },
         });
         if (error) throw error;
-        if (!data.session) throw new Error("Unable to create this account. Please contact the administrator.");
+        if (!data.session) setSent(true);
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: signInIdentity(username), password });
-        if (error) throw new Error("Unable to sign in. Check your username and password and try again.");
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Unable to sign in. Please try again.");
-    } finally { setBusy(false); }
+      toast.error((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-soft px-4">
       <div className="w-full max-w-md rounded-3xl border bg-card p-8 shadow-[var(--shadow-card)]">
         <Logo />
-        <h2 className="mt-8 text-2xl font-bold">{isSignup ? "Create your account" : "Welcome back, Doctor"}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{isSignup ? "Choose a username and password to get started." : "Sign in to continue."}</p>
-        <form onSubmit={submit} className="mt-6 space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="username">Username</Label>
-            <Input id="username" name="username" required autoComplete="username" autoCapitalize="none" spellCheck={false}
-              minLength={isSignup ? 3 : undefined} maxLength={isSignup ? 32 : 254}
-              pattern={isSignup ? "[a-zA-Z0-9][a-zA-Z0-9_]{2,31}" : undefined}
-              value={username} onChange={(e) => setUsername(e.target.value)} placeholder="dr_priya" disabled={busy} />
-            {isSignup && <p className="text-xs text-muted-foreground">3–32 letters, numbers or underscores.</p>}
+        {sent ? (
+          <div className="mt-8 text-center">
+            <MailCheck className="mx-auto h-10 w-10 text-primary" />
+            <h2 className="mt-4 text-xl font-semibold">Check your email</h2>
+            <p className="mt-2 text-sm text-muted-foreground">We sent a confirmation link to {email}. Confirm it, then sign in.</p>
+            <Button variant="outline" className="mt-6" onClick={() => { setSent(false); setIsSignup(false); }}>Back to sign in</Button>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="password">Password</Label>
-            <Input id="password" name="password" type="password" required minLength={isSignup ? 12 : 1}
-              autoComplete={isSignup ? "new-password" : "current-password"} value={password}
-              onChange={(e) => setPassword(e.target.value)} disabled={busy} />
-            {isSignup && <p className="text-xs text-muted-foreground">Use at least 12 characters.</p>}
-          </div>
-          <Button className="w-full" size="lg" disabled={busy}>
-            {busy && <Loader2 className="animate-spin" />} {isSignup ? "Create account" : "Sign in"}
-          </Button>
-        </form>
-        <p className="mt-6 text-center text-sm text-muted-foreground">
-          {isSignup ? "Already registered?" : "New to MedScribe AI?"}{" "}
-          <button type="button" disabled={busy} className="font-medium text-primary hover:underline"
-            onClick={() => { setPassword(""); navigate({ to: "/auth", search: isSignup ? {} : { mode: "signup" } }); }}>
-            {isSignup ? "Sign in" : "Create an account"}
-          </button>
-        </p>
+        ) : (
+          <>
+            <h2 className="mt-8 text-2xl font-bold">{isSignup ? "Create your account" : "Welcome back, Doctor"}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{isSignup ? "Set up your documentation workspace." : "Sign in to continue."}</p>
+            <form onSubmit={submit} className="mt-6 space-y-4">
+              {isSignup && (
+                <div className="space-y-1.5"><Label>Full name</Label><Input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Dr. Priya Sharma" /></div>
+              )}
+              <div className="space-y-1.5"><Label>Email</Label><Input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+              <div className="space-y-1.5"><Label>Password</Label><Input type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} /></div>
+              <Button className="w-full" size="lg" disabled={busy}>
+                {busy && <Loader2 className="animate-spin" />} {isSignup ? "Create account" : "Sign in"}
+              </Button>
+            </form>
+            <p className="mt-6 text-center text-sm text-muted-foreground">
+              {isSignup ? "Already registered?" : "New to MedScribe AI?"}{" "}
+              <button className="font-medium text-primary hover:underline" onClick={() => setIsSignup(!isSignup)}>
+                {isSignup ? "Sign in" : "Create an account"}
+              </button>
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
