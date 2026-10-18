@@ -1,21 +1,30 @@
 import type { NoteFields, NoteFieldKey, Segment } from "@/lib/notes-schema";
+import { apiError, authHeaders } from "@/lib/services/ai-client";
 
-/**
- * NOTE STRUCTURING SERVICE ABSTRACTION
- * ------------------------------------
- * Contract: organise ONLY what was said in the transcript into documentation fields.
- * It must never diagnose, suggest treatment, prescribe, triage, or write the
- * Doctor Assessment / Doctor Plan (those are not part of the output type at all).
- *
- * Replace `MockStructuringService` with a local/open-source LLM (e.g. Llama/Mistral via
- * Ollama or vLLM) prompted to extract verbatim-grounded text per field and to return
- * an empty string when the transcript does not mention a field.
- */
 export interface StructuringService {
   readonly name: string;
   structure(segments: Segment[]): Promise<NoteFields>;
 }
 
+export class AIStructuringService implements StructuringService {
+  readonly name = "AI clinical note structuring";
+
+  async structure(segments: Segment[]): Promise<NoteFields> {
+    if (!segments.some((segment) => segment.text.trim())) return {};
+
+    const response = await fetch("/api/structure-note", {
+      method: "POST",
+      headers: await authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ segments }),
+    });
+    if (!response.ok) throw await apiError(response);
+
+    const data = (await response.json()) as { fields?: NoteFields };
+    return data.fields || {};
+  }
+}
+
+// Deterministic test-only implementation retained for safety-contract unit tests.
 const RULES: Array<{ key: NoteFieldKey; patterns: RegExp[]; speaker?: "Doctor" | "Patient" }> = [
   { key: "chief_complaint", speaker: "Patient", patterns: [/dard|pain|takleef|problem|cough|khansi|khokla|bukhaar|fever|tap\b|dukh/i] },
   { key: "duration_onset", patterns: [/\b(din|days?|hafte|weeks?|months?|mahine|divas|since|kal se|aathavd)/i] },
@@ -32,11 +41,9 @@ const RULES: Array<{ key: NoteFieldKey; patterns: RegExp[]; speaker?: "Doctor" |
 
 const clean = (t: string) => t.replace(/^\[mock\]\s*/i, "").trim();
 
-/** Mock: keyword-based sentence routing. Output is verbatim transcript text only. */
 export class MockStructuringService implements StructuringService {
-  readonly name = "Mock structuring (keyword-based demo)";
+  readonly name = "Deterministic structuring test helper";
   async structure(segments: Segment[]): Promise<NoteFields> {
-    await new Promise((r) => setTimeout(r, 600));
     const out: Record<string, string[]> = {};
     for (const seg of segments) {
       const text = clean(seg.text);
@@ -47,13 +54,13 @@ export class MockStructuringService implements StructuringService {
       }
     }
     const patientLines = segments.filter((s) => s.speaker === "Patient").map((s) => clean(s.text));
-    if (patientLines.length) out["hpi"] = [patientLines.slice(0, 4).join(" ")];
+    if (patientLines.length) out.hpi = [patientLines.slice(0, 4).join(" ")];
     const fields: NoteFields = {};
-    for (const [k, v] of Object.entries(out)) {
-      fields[k as NoteFieldKey] = Array.from(new Set(v)).map((l) => `“${l}”`).join("\n");
+    for (const [key, values] of Object.entries(out)) {
+      fields[key as NoteFieldKey] = Array.from(new Set(values)).map((line) => `“${line}”`).join("\n");
     }
     return fields;
   }
 }
 
-export const structuringService: StructuringService = new MockStructuringService();
+export const structuringService: StructuringService = new AIStructuringService();
